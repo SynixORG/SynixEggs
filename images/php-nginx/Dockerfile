@@ -70,7 +70,7 @@ COPY rootfs/ /
 RUN set -eux; \
     chmod 0755 /entrypoint.sh /usr/local/bin/start-web; \
     adduser -D -h /home/container -s /bin/bash container; \
-    install -d -o container -g container /tmp/nginx /home/container/.cache/nginx
+    install -d -o container -g container /tmp/nginx /home/container/.cache /home/container/.cache/nginx
 
 USER        container
 ENV         USER=container HOME=/home/container
@@ -88,7 +88,8 @@ RUN set -eux; \
     for ext in pdo_mysql mbstring json filter hash openssl date random standard 'Zend OPcache'; do \
         php-fpm -m | grep -qixF "$ext" || { echo "php-fpm is missing $ext"; exit 1; }; \
     done
-RUN rm -rf /tmp/nginx /home/container/.cache
+# No cleanup needed: Wings mounts the server files over /home/container and a
+# fresh tmpfs over /tmp, so the test leftovers are never visible at runtime.
 
 WORKDIR     /home/container
 STOPSIGNAL  SIGINT
