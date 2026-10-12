@@ -4,15 +4,14 @@
         "version": "PTDL_v2",
         "update_url": null
     },
-    "exported_at": "2026-10-12T18:01:03+00:00",
+    "exported_at": "2026-10-12T18:03:33+00:00",
     "name": "nginx + PHP-FPM",
     "author": "noahfaiq@gmail.com",
     "description": "nginx (stable branch) with PHP-FPM on Alpine, running unprivileged. Upload your site to the web root folder (default /public); site config is in nginx/conf.d, PHP overrides in php/conf.d. Type 'reload' in the console after editing configs. Includes composer and the extensions most CMSes and frameworks need (gd, intl, mysqli, pdo_mysql, pdo_pgsql, zip, bcmath, exif, redis, opcache).",
-    "uuid": "937239cd-af4a-484d-b9fd-9b8fa84b1831",
+    "uuid": "c20f2255-e330-424e-8ba3-26d8361f7414",
     "features": null,
     "docker_images": {
-        "PHP 8.5": "ghcr.io/synixorg/php-nginx:php8.5",
-        "PHP 8.4": "ghcr.io/synixorg/php-nginx:php8.4"
+        "PHP 8.5": "ghcr.io/synixorg/php-nginx:php8.5"
     },
     "file_denylist": [],
     "startup": "exec start-web",
