@@ -1,0 +1,160 @@
+#!/bin/bash
+# Runs PHP-FPM and nginx side by side for the Pterodactyl nginx + PHP egg.
+#  - validates the panel variables and generates /tmp/nginx/panel.conf
+#  - tests both configs before starting
+#  - stops both gracefully on SIGINT/SIGTERM
+#  - exits (so the panel shows the server as stopped) if either process dies
+#  - console commands: reload, test, help
+set -uo pipefail
+
+HOME_DIR=/home/container
+cd "${HOME_DIR}" || exit 1
+
+log()  { echo "[web] $*"; }
+fail() { echo "[web] ERROR: $*" >&2; exit 1; }
+
+# ---------------------------------------------------------------- variables
+[[ "${SERVER_PORT:-}" =~ ^[0-9]+$ ]] \
+    || fail "SERVER_PORT is not set"
+[[ "${WEBROOT}" =~ ^[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$ ]] \
+    || fail "WEBROOT must be a sub-folder such as 'public' (got '${WEBROOT}')"
+[[ "${UPLOAD_MAX_SIZE}" =~ ^[0-9]+[KMG]$ ]] \
+    || fail "UPLOAD_MAX_SIZE must look like 64M (got '${UPLOAD_MAX_SIZE}')"
+[[ "${PHP_MEMORY_LIMIT}" =~ ^[0-9]+[KMG]$ ]] \
+    || fail "PHP_MEMORY_LIMIT must look like 256M (got '${PHP_MEMORY_LIMIT}')"
+[[ "${PHP_MAX_EXECUTION_TIME}" =~ ^[0-9]+$ ]] \
+    || fail "PHP_MAX_EXECUTION_TIME must be a number of seconds"
+
+if [[ "${PHP_FPM_MAX_CHILDREN}" == "auto" ]]; then
+    # ~64 MB per worker, keeping 64 MB for nginx and the FPM master
+    mem="${SERVER_MEMORY:-0}"
+    if (( mem > 0 )); then
+        FPM_MAX_CHILDREN=$(( (mem - 64) / 64 ))
+        (( FPM_MAX_CHILDREN < 2 )) && FPM_MAX_CHILDREN=2
+        (( FPM_MAX_CHILDREN > 64 )) && FPM_MAX_CHILDREN=64
+    else
+        FPM_MAX_CHILDREN=16
+    fi
+elif [[ "${PHP_FPM_MAX_CHILDREN}" =~ ^[1-9][0-9]{0,2}$ ]]; then
+    FPM_MAX_CHILDREN="${PHP_FPM_MAX_CHILDREN}"
+else
+    fail "PHP_FPM_MAX_CHILDREN must be 'auto' or a number (got '${PHP_FPM_MAX_CHILDREN}')"
+fi
+export FPM_MAX_CHILDREN
+
+# ---------------------------------------------------------------- runtime dirs
+mkdir -p /tmp/nginx .cache/nginx .cache/php/sessions .cache/php/uploads "${WEBROOT}" \
+    || fail "cannot create runtime directories"
+chmod 700 .cache .cache/php/sessions
+
+if (( PHP_MAX_EXECUTION_TIME == 0 )); then
+    FASTCGI_TIMEOUT=3600
+else
+    FASTCGI_TIMEOUT=$(( PHP_MAX_EXECUTION_TIME + 30 ))
+fi
+
+if [[ "${ACCESS_LOG}" == "1" || "${ACCESS_LOG}" == "true" ]]; then
+    ACCESS_LOG_LINE="access_log /dev/stdout main;"
+else
+    ACCESS_LOG_LINE="access_log off;"
+fi
+
+# Included from every server block in nginx/conf.d - regenerated on each start
+cat > /tmp/nginx/panel.conf <<EOF
+listen ${SERVER_PORT};
+root ${HOME_DIR}/${WEBROOT};
+client_max_body_size ${UPLOAD_MAX_SIZE};
+fastcgi_read_timeout ${FASTCGI_TIMEOUT}s;
+${ACCESS_LOG_LINE}
+EOF
+
+compgen -G "nginx/conf.d/*.conf" >/dev/null \
+    || fail "no site config found in nginx/conf.d/ - reinstall the server to restore the default"
+
+# ---------------------------------------------------------------- composer
+if [[ "${COMPOSER_AUTO_INSTALL}" == "1" || "${COMPOSER_AUTO_INSTALL}" == "true" ]] && [[ -f composer.json ]]; then
+    log "Running composer install"
+    composer install --no-dev --optimize-autoloader --no-interaction --no-progress \
+        || fail "composer install failed"
+fi
+
+# ---------------------------------------------------------------- start
+php-fpm -t >/dev/null 2>&1 || { php-fpm -t; fail "PHP-FPM config test failed"; }
+nginx -t -q -e stderr      || fail "nginx config test failed"
+
+php-fpm -F &
+FPM_PID=$!
+nginx -e stderr -g 'daemon off;' &
+NGINX_PID=$!
+
+alive() { kill -0 "${FPM_PID}" 2>/dev/null && kill -0 "${NGINX_PID}" 2>/dev/null; }
+
+# Graceful stop (finish running requests), force-kill after 25 seconds
+stop_children() {
+    trap '' INT TERM
+    kill -QUIT "${NGINX_PID}" "${FPM_PID}" 2>/dev/null
+    for _ in {1..25}; do
+        if ! kill -0 "${NGINX_PID}" 2>/dev/null && ! kill -0 "${FPM_PID}" 2>/dev/null; then
+            break
+        fi
+        sleep 1
+    done
+    kill -KILL "${NGINX_PID}" "${FPM_PID}" 2>/dev/null
+    wait
+}
+
+shutdown() {
+    log "Stopping"
+    stop_children
+    log "Stopped"
+    exit 0
+}
+trap shutdown INT TERM
+
+sleep 1
+if ! alive; then
+    stop_children
+    fail "a service failed to start, see the messages above"
+fi
+
+log "PHP $(php -r 'echo PHP_VERSION;'), $(nginx -v 2>&1 | sed 's/^nginx version: //'), ${FPM_MAX_CHILDREN} PHP workers max"
+log "Web server is running on port ${SERVER_PORT}, serving /home/container/${WEBROOT}"
+log "Console commands: reload, test, help"
+
+# ---------------------------------------------------------------- console loop
+while true; do
+    if read -r -t 1 cmd; then
+        case "${cmd}" in
+            reload)
+                if nginx -t -q -e stderr && php-fpm -t >/dev/null 2>&1; then
+                    kill -HUP "${NGINX_PID}"
+                    kill -USR2 "${FPM_PID}"
+                    log "Reloaded nginx and PHP-FPM"
+                else
+                    log "Config test failed - nothing was reloaded"
+                fi
+                ;;
+            test)
+                nginx -t -e stderr
+                php-fpm -t
+                ;;
+            help|"")
+                log "reload - re-read nginx/PHP configs without downtime (after editing nginx/conf.d or php/conf.d)"
+                log "test   - check the nginx and PHP-FPM configs"
+                ;;
+            *)
+                log "Unknown command '${cmd}' - type help"
+                ;;
+        esac
+    elif (( $? <= 128 )); then
+        # stdin closed: keep supervising without busy-looping
+        sleep 1
+    fi
+
+    if ! alive; then
+        kill -0 "${FPM_PID}"   2>/dev/null || log "PHP-FPM exited unexpectedly"
+        kill -0 "${NGINX_PID}" 2>/dev/null || log "nginx exited unexpectedly"
+        stop_children
+        exit 1
+    fi
+done

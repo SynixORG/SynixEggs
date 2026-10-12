@@ -1,0 +1,106 @@
+{
+    "_comment": "DO NOT EDIT: FILE GENERATED AUTOMATICALLY BY PANEL",
+    "meta": {
+        "version": "PTDL_v2",
+        "update_url": null
+    },
+    "exported_at": "2026-10-12T17:53:44+00:00",
+    "name": "nginx + PHP-FPM",
+    "author": "noahfaiq@gmail.com",
+    "description": "nginx (stable branch) with PHP-FPM on Alpine, running unprivileged. Upload your site to the web root folder (default /public); site config is in nginx/conf.d, PHP overrides in php/conf.d. Type 'reload' in the console after editing configs. Includes composer and the extensions most CMSes and frameworks need (gd, intl, mysqli, pdo_mysql, pdo_pgsql, zip, bcmath, exif, redis, opcache).",
+    "uuid": "0fc189af-55b2-4bee-acb5-1a0539e69a93",
+    "features": null,
+    "docker_images": {
+        "PHP 8.5": "ghcr.io/noahfaiq/php-nginx:php8.5",
+        "PHP 8.4": "ghcr.io/noahfaiq/php-nginx:php8.4"
+    },
+    "file_denylist": [],
+    "startup": "exec start-web",
+    "config": {
+        "files": "{}",
+        "startup": "{\n    \"done\": \"Web server is running\"\n}",
+        "logs": "{}",
+        "stop": "^C"
+    },
+    "scripts": {
+        "installation": {
+            "script": "#!/bin/ash\n# nginx + PHP-FPM installation script\n#\n# Server files: /mnt/server\n# Safe to re-run: existing site files and configs are never overwritten.\nset -eu\n\ncase \"${WEBROOT}\" in\n    \"\"|/*|*..*) echo \"Invalid WEBROOT '${WEBROOT}'\"; exit 1 ;;\nesac\n\nmkdir -p /mnt/server\ncd /mnt/server\nmkdir -p nginx/conf.d php/conf.d \"${WEBROOT}\"\n\n# Latest template is always available for reference\ncat > nginx/default.conf.example <<'EOF'\n# Default site - edit freely, a reinstall never overwrites this file.\n# Port, web root, upload limit, timeout and access log come from the panel\n# variables via /tmp/nginx/panel.conf (regenerated on every start).\n# After editing, type \"reload\" in the console.\nserver {\n    include /tmp/nginx/panel.conf;\n    server_name _;\n    index index.php index.html;\n\n    add_header X-Content-Type-Options \"nosniff\" always;\n    add_header X-Frame-Options \"SAMEORIGIN\" always;\n    add_header Referrer-Policy \"strict-origin-when-cross-origin\" always;\n\n    # Behind Cloudflare or another reverse proxy? Uncomment and list the proxy\n    # IP ranges so logs and PHP see the real visitor IP.\n    # set_real_ip_from 10.0.0.0/8;\n    # real_ip_header X-Forwarded-For;\n\n    include /etc/nginx/snippets/security.conf;\n\n    location / {\n        try_files $uri $uri/ /index.php?$query_string;\n    }\n\n    include /etc/nginx/snippets/php.conf;\n}\nEOF\n\nif [ ! -f nginx/conf.d/default.conf ]; then\n    cp nginx/default.conf.example nginx/conf.d/default.conf\n    echo \"Created nginx/conf.d/default.conf\"\nfi\n\nif [ ! -f php/conf.d/99-custom.ini ]; then\n    cat > php/conf.d/99-custom.ini <<'EOF'\n; Your PHP overrides - loaded after the image defaults, so they win.\n; Note: values set here override the panel variables (memory limit, upload size, ...).\n; Restart the server or type \"reload\" in the console to apply.\n;\n; max_input_vars = 3000\n; display_errors = On   ; development only\nEOF\n    echo \"Created php/conf.d/99-custom.ini\"\nfi\n\nif [ -z \"$(ls -A \"${WEBROOT}\")\" ]; then\n    cat > \"${WEBROOT}/index.php\" <<'EOF'\n<!doctype html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><title>It works</title></head>\n<body>\n<h1>It works</h1>\n<p><?php echo 'PHP is running.'; ?> Upload your site to this folder.</p>\n</body>\n</html>\nEOF\n    echo \"Created placeholder ${WEBROOT}/index.php\"\nfi\n\necho \"-----------------------------------------\"\necho \"Installation completed - upload your site to /${WEBROOT}\"\necho \"-----------------------------------------\"\n",
+            "container": "alpine:3.24",
+            "entrypoint": "ash"
+        }
+    },
+    "variables": [
+        {
+            "name": "Web Root Folder",
+            "description": "Folder inside the server that is served to visitors, e.g. 'public' or 'public_html'. Laravel: upload the project to the server root and keep 'public'.",
+            "env_variable": "WEBROOT",
+            "default_value": "public",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|max:64|regex:/^[A-Za-z0-9_-]+(\\/[A-Za-z0-9_-]+)*$/"
+        },
+        {
+            "name": "PHP Memory Limit",
+            "description": "Maximum memory per PHP request, e.g. 128M, 256M, 1G.",
+            "env_variable": "PHP_MEMORY_LIMIT",
+            "default_value": "256M",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|max:8|regex:/^[0-9]+[KMG]$/"
+        },
+        {
+            "name": "Max Upload Size",
+            "description": "Largest request body / file upload accepted by nginx and PHP, e.g. 64M or 1G.",
+            "env_variable": "UPLOAD_MAX_SIZE",
+            "default_value": "64M",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|max:8|regex:/^[0-9]+[KMG]$/"
+        },
+        {
+            "name": "Max Execution Time",
+            "description": "Seconds a PHP request may run before it is stopped.",
+            "env_variable": "PHP_MAX_EXECUTION_TIME",
+            "default_value": "60",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|integer|min:1|max:3600"
+        },
+        {
+            "name": "PHP Workers",
+            "description": "Maximum number of concurrent PHP processes. 'auto' sizes it from the server's memory (~64 MB each).",
+            "env_variable": "PHP_FPM_MAX_CHILDREN",
+            "default_value": "auto",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|alpha_num|max:4"
+        },
+        {
+            "name": "Disabled PHP Functions",
+            "description": "Comma-separated PHP functions blocked for web requests (not for composer). Clear it if your app needs to run shell commands.",
+            "env_variable": "PHP_DISABLE_FUNCTIONS",
+            "default_value": "exec,passthru,shell_exec,system,popen,proc_open,pcntl_exec",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:512|regex:/^[a-z0-9_,]*$/"
+        },
+        {
+            "name": "Access Log",
+            "description": "1 = show every request in the console, 0 = errors only.",
+            "env_variable": "ACCESS_LOG",
+            "default_value": "1",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|boolean"
+        },
+        {
+            "name": "Composer Auto Install",
+            "description": "1 = run 'composer install --no-dev' on every start when composer.json exists in the server root.",
+            "env_variable": "COMPOSER_AUTO_INSTALL",
+            "default_value": "0",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|boolean"
+        }
+    ]
+}

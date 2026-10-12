@@ -1,0 +1,60 @@
+name: build php-nginx
+on:
+  workflow_dispatch:
+  # Weekly rebuild picks up PHP, nginx and Alpine security patches
+  schedule:
+    - cron: "0 3 * * 1"
+  push:
+    branches:
+      - main
+    paths:
+      - images/php-nginx/**
+      - .github/workflows/php-nginx.yml
+  pull_request:
+    paths:
+      - images/php-nginx/**
+      - .github/workflows/php-nginx.yml
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  push:
+    name: "php-nginx:php${{ matrix.php }}"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php:
+          - "8.4"
+          - "8.5"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - id: vars
+        name: Image name and date tag
+        run: |
+          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER@L}/php-nginx" >> "$GITHUB_OUTPUT"
+          echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v4
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: ./images/php-nginx
+          platforms: linux/amd64,linux/arm64
+          pull: true
+          push: ${{ github.event_name != 'pull_request' }}
+          provenance: true
+          sbom: true
+          build-args: |
+            PHP_VERSION=${{ matrix.php }}
+          # php8.5 = rolling (used by the egg); php8.5-YYYYMMDD = fixed, for rollbacks
+          tags: |
+            ${{ steps.vars.outputs.image }}:php${{ matrix.php }}
+            ${{ steps.vars.outputs.image }}:php${{ matrix.php }}-${{ steps.vars.outputs.date }}
