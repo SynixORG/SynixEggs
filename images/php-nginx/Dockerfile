@@ -75,17 +75,20 @@ RUN set -eux; \
 USER        container
 ENV         USER=container HOME=/home/container
 
-# Self-test as the unprivileged user (php-fpm refuses to run as root):
-# configs must parse, PHP features must work, FPM must load the same extensions.
+# Self-test as the unprivileged user (php-fpm refuses to run as root), one check
+# per step so a failure names the check. Output is piped through cat because the
+# build's stderr belongs to root and php-fpm re-opens its error_log path.
+RUN set -euxo pipefail; \
+    FPM_MAX_CHILDREN=4 php-fpm -t 2>&1 | cat
+RUN set -eux; \
+    nginx -t -e stderr
 RUN --mount=type=bind,source=selftest.php,target=/tmp/selftest.php \
-    set -eux; \
-    FPM_MAX_CHILDREN=4 php-fpm -t; \
-    nginx -t -e stderr; \
-    php /tmp/selftest.php; \
+    php /tmp/selftest.php
+RUN set -eux; \
     for ext in pdo_mysql mbstring json filter hash openssl date random standard 'Zend OPcache'; do \
         php-fpm -m | grep -qixF "$ext" || { echo "php-fpm is missing $ext"; exit 1; }; \
-    done; \
-    rm -rf /tmp/nginx /home/container/.cache
+    done
+RUN rm -rf /tmp/nginx /home/container/.cache
 
 WORKDIR     /home/container
 STOPSIGNAL  SIGINT

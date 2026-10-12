@@ -10,6 +10,11 @@ set -uo pipefail
 HOME_DIR=/home/container
 cd "${HOME_DIR}" || exit 1
 
+# Docker's stdout/stderr pipes belong to root, so an unprivileged process
+# cannot re-open them via /proc/self/fd/N or /dev/std* (php-fpm's error_log,
+# nginx's access_log). Relay all output through pipes this user owns.
+exec > >(cat) 2> >(cat >&2)
+
 log()  { echo "[web] $*"; }
 fail() { echo "[web] ERROR: $*" >&2; exit 1; }
 
