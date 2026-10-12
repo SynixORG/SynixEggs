@@ -9,7 +9,7 @@ plus nginx from the signed nginx.org **stable** repository. Runs fully unprivile
 | `ghcr.io/<owner>/php-nginx:php8.4` | PHP 8.4, nginx 1.30.x |
 | `...:php8.5-YYYYMMDD` | Fixed weekly snapshot, for rollbacks |
 
-Built weekly (Mondays 03:00 UTC) by `.github/workflows/php-nginx.yml` for amd64 and arm64.
+Built weekly (Mondays 03:00 UTC) by `.github/workflows/php-nginx.yml` for amd64 (x86_64) nodes.
 
 ## Publishing
 
