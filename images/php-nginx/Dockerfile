@@ -20,6 +20,9 @@ RUN set -eux; \
     echo "${NGINX_KEY_SHA512} */tmp/nginx_signing.rsa.pub" | sha512sum -c -; \
     mv /tmp/nginx_signing.rsa.pub /etc/apk/keys/; \
     ALPINE_BRANCH="$(grep -oE '^[0-9]+\.[0-9]+' /etc/alpine-release)"; \
+    # nginx.org's package needs these libraries from the Alpine repos ...
+    apk add --no-cache so:libpcre2-8.so.0 so:libssl.so.3 so:libcrypto.so.3 so:libz.so.1; \
+    # ... while nginx itself must come from nginx.org only (same as the official image)
     apk add --no-cache --repositories-file /dev/null \
         -X "https://nginx.org/packages/alpine/v${ALPINE_BRANCH}/main" \
         "nginx~${NGINX_BRANCH}"; \
